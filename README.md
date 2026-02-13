@@ -126,3 +126,138 @@
             mapPaintWidget->m_updateTimer->start();
         }
     }
+
+
+
+
+
+
+    // optimised 3d trail
+    else if (mapPaintWidget->MapProjection == 1) // 3D
+{
+    using namespace Esri::ArcGISRuntime;
+
+    if (mapPaintWidget->Selected_id == 0)
+        return;
+
+    // ---------- persistent trail ----------
+    static dtools::TrailData selectedTrail;
+    static SimpleLineSymbol* trailSymbol = nullptr;
+    static QDateTime lastRenderTime;
+
+    auto* sceneView = mapPaintWidget->getMapSceneView();
+    if (!sceneView || sceneView->graphicsOverlays()->isEmpty())
+        return;
+
+    auto* overlay = sceneView->graphicsOverlays()->at(0);
+
+    // ---------- create symbol ONCE ----------
+    if (!trailSymbol)
+    {
+        trailSymbol = new SimpleLineSymbol(
+            SimpleLineSymbolStyle::Solid,
+            QColor(Qt::cyan),
+            3.0
+        );
+    }
+
+    // ---------- selected aircraft changed ----------
+    if (pre_Selected_id != mapPaintWidget->Selected_id)
+    {
+        pre_Selected_id = mapPaintWidget->Selected_id;
+
+        if (selectedTrail.graphic)
+            overlay->graphics()->removeOne(selectedTrail.graphic);
+
+        selectedTrail.points.clear();
+        selectedTrail.graphic = nullptr;
+    }
+
+    selectedTrail.lastUpdate = QDateTime::currentDateTimeUtc();
+
+    // ---------- append new points ----------
+    bool newPointAdded = false;
+
+    if (mapPaintWidget->Selected_id == aircraftId && !lineStrings.isEmpty())
+    {
+        const LineString& ls = lineStrings.last();
+
+        for (const dtools::geo::Pos& p : ls)
+        {
+            if (!p.isValid())
+                continue;
+
+            if (!selectedTrail.points.isEmpty())
+            {
+                const auto& last = selectedTrail.points.last();
+
+                // fast reject (cheap)
+                if (qAbs(last.getLatY() - p.getLatY()) < 1e-7 &&
+                    qAbs(last.getLonX() - p.getLonX()) < 1e-7)
+                    continue;
+
+                double dist = computeDistanceMeters(last, p);
+
+                if (dist < 1.0)
+                    continue;
+
+                // sudden teleport → reset
+                if (dist > 5000.0)
+                    selectedTrail.points.clear();
+            }
+
+            selectedTrail.points.append(p);
+            newPointAdded = true;
+        }
+    }
+
+    // ---------- limit trail ----------
+    const int maxTrailPoints = 200;
+    if (selectedTrail.points.size() > maxTrailPoints)
+    {
+        selectedTrail.points.remove(
+            0,
+            selectedTrail.points.size() - maxTrailPoints
+        );
+        newPointAdded = true;
+    }
+
+    if (selectedTrail.points.size() < 2)
+        return;
+
+    // ---------- throttle updates (10 FPS max) ----------
+    QDateTime now = QDateTime::currentDateTimeUtc();
+    if (!newPointAdded && lastRenderTime.msecsTo(now) < 100)
+        return;
+
+    lastRenderTime = now;
+
+    // ---------- rebuild polyline ONLY when needed ----------
+    PolylineBuilder builder(SpatialReference::wgs84());
+
+    for (const auto& p : selectedTrail.points)
+        builder.addPoint(p.getLonX(),
+                         p.getLatY(),
+                         p.getAltitude());
+
+    Polyline polyline = builder.toPolyline();
+
+    // ---------- update color without realloc ----------
+    QColor color = selectedTrail.gradientFlag
+                       ? QColor(Qt::yellow)
+                       : QColor(Qt::cyan);
+
+    trailSymbol->setColor(color);
+
+    // ---------- create / update graphic ----------
+    if (!selectedTrail.graphic)
+    {
+        selectedTrail.graphic = new Graphic(polyline, trailSymbol);
+        overlay->graphics()->append(selectedTrail.graphic);
+    }
+    else
+    {
+        selectedTrail.graphic->setGeometry(polyline);
+    }
+}
+
