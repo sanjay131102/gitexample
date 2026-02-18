@@ -1,3 +1,6 @@
+// In header — new member
+Esri::ArcGISRuntime::SpatialReference m_wgs84;
+
 else if (mapPaintWidget->MapProjection == 1) // 3D drone
 {
     if (vehicle.isUser())
