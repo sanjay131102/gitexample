@@ -303,3 +303,110 @@ else if (mapPaintWidget->MapProjection == 1) // 3D drone
             // qDebug() << "Updated 3D aircraft attributes for id:" << id;
         }
     }
+
+
+
+
+//wokring low cpu code from ws
+
+    else if (mapPaintWidget->MapProjection == 1) // 3D drone
+    { if (vehicle.isUser()) return;
+
+        const Pos& pos = vehicle.getPosition();
+    if (!pos.isValid())
+        return;
+
+    // Validate coordinates
+    double lon = pos.getLonX();
+    double lat = pos.getLatY();
+    double alt = pos.getAltitude();
+
+    if (!std::isfinite(lon) || !std::isfinite(lat) || !std::isfinite(alt))
+    {
+        qWarning() << "Invalid coordinates for vehicle id" << vehicle.getObjectId()
+        << "lon:" << lon << "lat:" << lat << "alt:" << alt;
+        return;
+    }
+
+    Esri::ArcGISRuntime::Point aircraftPoint(
+        lon, lat, alt, Esri::ArcGISRuntime::SpatialReference::wgs84());
+
+    // Compute heading safely
+    double heading = 0.0;
+    if (vehicle.getvx() != 0.0 || vehicle.getvy() != 0.0) {
+        heading = atan2(vehicle.getvx(), vehicle.getvy()) * 180.0 / M_PI;
+        heading = fmod(heading + 360.0, 360.0);
+    }
+
+    int id = vehicle.getObjectId();
+    Esri::ArcGISRuntime::Graphic* aircraftGraphic =
+        mapPaintWidget->m_vehicleGraphics_3d.value(id, nullptr);
+
+    // Overlay index 1 reserved for 3D aircraft
+    Esri::ArcGISRuntime::GraphicsOverlay* overlay = nullptr;
+    if (mapPaintWidget->getMapSceneView() &&
+        mapPaintWidget->getMapSceneView()->graphicsOverlays()->size() > 1)
+    {
+        overlay = mapPaintWidget->getMapSceneView()->graphicsOverlays()->at(1);
+    }
+    if (!overlay)
+    {
+        qWarning() << "3D aircraft overlay (index 1) not found!";
+        return;
+    }
+
+    if (!aircraftGraphic)
+    {
+        // --- Create new 3D model symbol ---
+        QString relativePath = "../3d_data/drone2.dae";
+        QString modelPath = QDir::cleanPath(QDir(QCoreApplication::applicationDirPath()).filePath(relativePath));
+
+        if (!QFile::exists(modelPath)) {
+            qWarning() << "Model file missing:" << modelPath;
+            return;
+        }
+
+        // Use ModelSceneSymbol (static) without setting heading/pitch/roll
+        auto* modelSymbol = new Esri::ArcGISRuntime::ModelSceneSymbol(
+            QUrl::fromLocalFile(modelPath), 50.0);
+
+        // Create graphic
+        aircraftGraphic = new Esri::ArcGISRuntime::Graphic(aircraftPoint, modelSymbol, nullptr);
+
+        // Initialize attributes for renderer
+        aircraftGraphic->attributes()->insertAttribute("ANGLE", heading);
+        aircraftGraphic->attributes()->insertAttribute("TILT", 0.0);
+        aircraftGraphic->attributes()->insertAttribute("ROLL", 0.0);
+        aircraftGraphic->attributes()->insertAttribute("TargetId", id);
+
+        // Append to overlay and cache
+        overlay->graphics()->append(aircraftGraphic);
+        mapPaintWidget->m_vehicleGraphics_3d[id] = aircraftGraphic;
+
+        // qDebug() << "Created new 3D aircraft model for id:" << id;
+
+        // --- Setup renderer only once for this overlay ---
+        if (!overlay->renderer())
+        {
+            auto* renderer = new Esri::ArcGISRuntime::SimpleRenderer(modelSymbol, overlay);
+            Esri::ArcGISRuntime::RendererSceneProperties props;
+            props.setHeadingExpression("[ANGLE]");
+            props.setPitchExpression("[TILT]");
+            props.setRollExpression("[ROLL]");
+            renderer->setSceneProperties(props);
+            overlay->setRenderer(renderer);
+        }
+    }
+    else
+    {
+        // --- Update existing graphic ---
+        aircraftGraphic->setGeometry(aircraftPoint);
+
+        // Update only attributes for smooth rotation
+        aircraftGraphic->attributes()->replaceAttribute("ANGLE", heading);
+        aircraftGraphic->attributes()->replaceAttribute("TILT", 0.0);
+        aircraftGraphic->attributes()->replaceAttribute("ROLL", 0.0);
+
+        // qDebug() << "Updated 3D aircraft attributes for id:" << id;
+    }
+}
