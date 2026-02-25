@@ -109,3 +109,41 @@ void MapPaintLayer::updateLayers()
   // }
 }
 
+
+
+
+
+
+
+
+void MapPaintWidget::init3DSystem()
+{
+    using namespace Esri::ArcGISRuntime;
+
+    if (!getMapSceneView())
+        return;
+
+    // ---- Cache existing overlay index 1 ----
+    if (getMapSceneView()->graphicsOverlays()->size() > 1)
+    {
+        m_aircraftOverlay3D =
+            getMapSceneView()->graphicsOverlays()->at(1);
+    }
+
+    if (!m_aircraftOverlay3D)
+    {
+        qWarning() << "3D aircraft overlay index 1 not found!";
+        return;
+    }
+
+    // ---- Start timer only once ----
+    if (!m_3dUpdateTimer)
+    {
+        m_3dUpdateTimer = new QTimer(this);
+        connect(m_3dUpdateTimer, &QTimer::timeout,
+                this, &MapPaintWidget::updateAircraft3D);
+
+        m_3dUpdateTimer->start(250);
+
+    }
+}
